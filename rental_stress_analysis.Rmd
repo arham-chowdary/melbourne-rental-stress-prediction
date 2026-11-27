@@ -1,0 +1,863 @@
+---
+title: "Melbourne Rental Stress Analysis"
+author: "Arham Chowdary"
+date: "2026-10-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Data Import
+
+```{r import-data}
+library(readxl)
+library(dplyr)
+
+file_path <- "data/quarterly-median-rents-local-government-area-september-quarter-2025-excel.xlsx"
+
+rental_raw <- read_excel(
+  file_path,
+  sheet = "All Properties",
+  col_names = FALSE
+)
+
+dim(rental_raw)
+
+head(rental_raw[, 1:8], 10)
+
+```
+## 2. Extract Melbourne LGAs
+
+```{r extract-melbourne}
+# Select rows belonging to Melbourne's three metropolitan regions
+melbourne_rows <- c(57:70, 72:78, 80:89)
+
+# Extract Melbourne LGA records
+melbourne_raw <- rental_raw[melbourne_rows, ]
+
+# Check the dimensions
+dim(melbourne_raw)
+
+# Display the LGA names
+print(melbourne_raw[[2]])
+```
+## 3. Examine Quarterly Dates
+
+```{r examine-dates}
+# Extract the quarterly date headings
+quarter_dates <- unlist(rental_raw[2, 3:ncol(rental_raw)],
+                        use.names = FALSE)
+
+# Display the first 12 date headings
+print(head(quarter_dates, 12))
+
+# Display the last 12 date headings
+print(tail(quarter_dates, 12))
+```
+## 4. Restructure Rental Data
+
+```{r restructure-data}
+library(dplyr)
+library(tidyr)
+
+# Extract quarter labels and measurement types
+quarter_labels <- as.character(unlist(
+  rental_raw[2, 3:ncol(rental_raw)],
+  use.names = FALSE
+))
+
+measurement_types <- as.character(unlist(
+  rental_raw[3, 3:ncol(rental_raw)],
+  use.names = FALSE
+))
+
+# Create descriptive column names
+new_names <- paste(
+  quarter_labels,
+  measurement_types,
+  sep = "_"
+)
+
+# Select Melbourne LGAs
+rental_clean <- as.data.frame(melbourne_raw)
+
+# Assign new column names
+colnames(rental_clean) <- c(
+  "Region",
+  "LGA",
+  new_names
+)
+
+# Convert wide data into long format
+rental_long <- rental_clean %>%
+  select(-Region) %>%
+  pivot_longer(
+    cols = -LGA,
+    names_to = c("Quarter", ".value"),
+    names_pattern = "^(.*)_(Count|Median)$"
+  ) %>%
+  mutate(
+    Count = as.numeric(Count),
+    Median = as.numeric(Median),
+    Quarter = as.Date(
+      paste0("01 ", Quarter),
+      format = "%d %b %Y"
+    )
+  ) %>%
+  rename(
+    Median_Rent = Median,
+    Rental_Count = Count
+  ) %>%
+  arrange(LGA, Quarter)
+
+# Check the new dataset
+dim(rental_long)
+
+head(rental_long, 10)
+
+# Check the date range
+range(rental_long$Quarter)
+```
+## 5. Exploratory Data Analysis
+
+### 5.1 Historical Rental Trends
+
+```{r rental-trends}
+library(ggplot2)
+library(dplyr)
+
+# Calculate median of LGA median rents for each quarter
+melbourne_trend <- rental_long %>%
+  group_by(Quarter) %>%
+  summarise(
+    Median_Rent = median(Median_Rent, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Create historical rental trend chart
+ggplot(melbourne_trend, aes(x = Quarter, y = Median_Rent)) +
+  geom_line(color = "steelblue", linewidth = 1.2) +
+  geom_point(color = "darkblue", size = 1) +
+  labs(
+    title = "Historical Rental Trends Across Melbourne LGAs",
+    subtitle = "Median of LGA median weekly rents (1999–2025)",
+    x = "Year",
+    y = "Median Weekly Rent (AUD)",
+    caption = "Source: Homes Victoria, Quarterly Median Rents by LGA"
+  ) +
+  theme_minimal(base_size = 12)
+```
+### 5.2 Geographic Differences in Rental Prices
+
+```{r highest-rent-lgas}
+library(dplyr)
+library(ggplot2)
+
+# Select the latest quarter
+latest_rents <- rental_long %>%
+  filter(Quarter == max(Quarter, na.rm = TRUE)) %>%
+  arrange(desc(Median_Rent))
+
+# Display the 10 most expensive LGAs
+print(as.data.frame(head(latest_rents, 10)))
+
+# Create a bar chart
+ggplot(
+  head(latest_rents, 10),
+  aes(x = reorder(LGA, Median_Rent), y = Median_Rent)
+) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Top 10 Most Expensive Melbourne LGAs",
+    subtitle = "Median weekly rent, September 2025",
+    x = "Local Government Area",
+    y = "Median Weekly Rent (AUD)",
+    caption = "Source: Homes Victoria, Quarterly Median Rents by LGA"
+  ) +
+  theme_minimal(base_size = 12)
+```
+### 5.3 Annual Rental Growth Across Melbourne LGAs
+
+```{r annual-rental-growth}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Select September 2024 and September 2025
+annual_growth <- rental_long %>%
+  filter(Quarter %in% as.Date(c("2024-09-01", "2025-09-01"))) %>%
+  select(LGA, Quarter, Median_Rent) %>%
+  pivot_wider(
+    names_from = Quarter,
+    values_from = Median_Rent,
+    names_prefix = "Rent_"
+  ) %>%
+  mutate(
+    Growth_Percent =
+      ((`Rent_2025-09-01` - `Rent_2024-09-01`) /
+         `Rent_2024-09-01`) * 100
+  ) %>%
+  arrange(desc(Growth_Percent))
+
+# Display top 10 LGAs
+print(as.data.frame(head(annual_growth, 10)))
+
+# Visualise annual rental growth
+ggplot(
+  head(annual_growth, 10),
+  aes(x = reorder(LGA, Growth_Percent),
+      y = Growth_Percent)
+) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Top 10 Melbourne LGAs by Annual Rental Growth",
+    subtitle = "September 2024 – September 2025",
+    x = "Local Government Area",
+    y = "Annual Median Rent Growth (%)",
+    caption = "Source: Homes Victoria, Quarterly Median Rents by LGA"
+  ) +
+  theme_minimal(base_size = 12)
+```
+### 5.4 Quarterly Rental Growth Analysis
+
+```{r quarterly-rental-growth}
+library(dplyr)
+
+quarterly_growth <- rental_long %>%
+  arrange(LGA, Quarter) %>%
+  group_by(LGA) %>%
+  mutate(
+    Previous_Rent = lag(Median_Rent),
+    Quarterly_Growth = 
+      ((Median_Rent - Previous_Rent) / Previous_Rent) * 100
+  ) %>%
+  ungroup()
+
+# Display first 10 observations
+print(as.data.frame(head(quarterly_growth, 10)))
+
+# Summary of quarterly rental growth
+summary(quarterly_growth$Quarterly_Growth)
+
+# Check missing values
+sum(is.na(quarterly_growth$Quarterly_Growth))
+```
+## 6. Defining the Prediction Target
+
+```{r prediction-target}
+library(dplyr)
+
+rental_prediction <- quarterly_growth %>%
+  arrange(LGA, Quarter) %>%
+  group_by(LGA) %>%
+  mutate(
+    Next_Quarter_Rent = lead(Median_Rent),
+
+    Next_Quarter_Growth =
+      ((Next_Quarter_Rent - Median_Rent) /
+         Median_Rent) * 100,
+
+    Deterioration = case_when(
+      is.na(Next_Quarter_Growth) ~ NA_integer_,
+      Next_Quarter_Growth > 0 ~ 1L,
+      TRUE ~ 0L
+    )
+  ) %>%
+  ungroup()
+
+# Check prediction target distribution
+table(
+  rental_prediction$Deterioration,
+  useNA = "ifany"
+)
+
+# Display sample records
+print(
+  as.data.frame(
+    head(
+      rental_prediction[
+        ,
+        c(
+          "LGA",
+          "Quarter",
+          "Median_Rent",
+          "Next_Quarter_Rent",
+          "Next_Quarter_Growth",
+          "Deterioration"
+        )
+      ],
+      10
+    )
+  )
+)
+```
+## 7. Preparing Features for Machine Learning
+
+```{r feature-engineering}
+library(dplyr)
+library(lubridate)
+
+model_data <- rental_prediction %>%
+  arrange(LGA, Quarter) %>%
+  group_by(LGA) %>%
+  mutate(
+    Previous_Quarter_Growth = lag(Quarterly_Growth),
+    Year = year(Quarter),
+    Quarter_Number = quarter(Quarter)
+  ) %>%
+  ungroup() %>%
+  filter(
+    !is.na(Deterioration),
+    !is.na(Quarterly_Growth),
+    !is.na(Previous_Quarter_Growth)
+  ) %>%
+  mutate(
+    Deterioration = factor(
+      Deterioration,
+      levels = c(0, 1),
+      labels = c("No_Increase", "Increase")
+    )
+  )
+
+# Check dimensions
+dim(model_data)
+
+# Check target distribution
+table(model_data$Deterioration)
+
+# Check missing values
+colSums(is.na(model_data[
+  ,
+  c(
+    "Median_Rent",
+    "Rental_Count",
+    "Quarterly_Growth",
+    "Previous_Quarter_Growth",
+    "Year",
+    "Quarter_Number",
+    "Deterioration"
+  )
+]))
+
+# Display sample records
+print(as.data.frame(
+  head(
+    model_data[
+      ,
+      c(
+        "LGA",
+        "Quarter",
+        "Median_Rent",
+        "Rental_Count",
+        "Quarterly_Growth",
+        "Previous_Quarter_Growth",
+        "Year",
+        "Quarter_Number",
+        "Deterioration"
+      )
+    ],
+    10
+  )
+))
+```
+## 8. Training and Testing Data
+
+```{r train-test-split}
+library(dplyr)
+
+# Chronological train/test split
+train_data <- model_data %>%
+  filter(Quarter < as.Date("2022-12-01"))
+
+test_data <- model_data %>%
+  filter(Quarter >= as.Date("2023-01-01"))
+
+# Check dataset sizes
+cat("Training observations:", nrow(train_data), "\n")
+cat("Testing observations:", nrow(test_data), "\n")
+
+# Check date ranges
+cat("Training period:\n")
+print(range(train_data$Quarter))
+
+cat("Testing period:\n")
+print(range(test_data$Quarter))
+
+# Check class distribution
+cat("Training class distribution:\n")
+print(table(train_data$Deterioration))
+
+cat("Testing class distribution:\n")
+print(table(test_data$Deterioration))
+
+# Confirm no overlap between training and testing periods
+cat(
+  "Chronological split valid:",
+  max(train_data$Quarter) < min(test_data$Quarter),
+  "\n"
+)
+```
+## 9. Logistic Regression Model
+
+```{r logistic-regression}
+# Ensure the target variable has the correct reference category
+train_data$Deterioration <- factor(
+  train_data$Deterioration,
+  levels = c("No_Increase", "Increase")
+)
+
+test_data$Deterioration <- factor(
+  test_data$Deterioration,
+  levels = c("No_Increase", "Increase")
+)
+
+# Train logistic regression model
+logistic_model <- glm(
+  Deterioration ~ Median_Rent +
+    Rental_Count +
+    Quarterly_Growth +
+    Previous_Quarter_Growth +
+    Quarter_Number,
+  data = train_data,
+  family = binomial(link = "logit")
+)
+
+# Display model summary
+summary(logistic_model)
+```
+## 10. Logistic Regression Model Evaluation
+
+```{r model-evaluation}
+# Predict probabilities on testing data
+test_probabilities <- predict(
+  logistic_model,
+  newdata = test_data,
+  type = "response"
+)
+
+# Convert probabilities into classifications
+test_predictions <- ifelse(
+  test_probabilities >= 0.5,
+  "Increase",
+  "No_Increase"
+)
+
+# Convert predictions into factors
+test_predictions <- factor(
+  test_predictions,
+  levels = c("No_Increase", "Increase")
+)
+
+# Confusion matrix
+confusion_matrix <- table(
+  Actual = test_data$Deterioration,
+  Predicted = test_predictions
+)
+
+print(confusion_matrix)
+
+# Calculate accuracy
+accuracy <- mean(
+  test_predictions == test_data$Deterioration
+)
+
+# Calculate precision
+precision <- sum(
+  test_predictions == "Increase" &
+    test_data$Deterioration == "Increase"
+) / sum(test_predictions == "Increase")
+
+# Calculate recall
+recall <- sum(
+  test_predictions == "Increase" &
+    test_data$Deterioration == "Increase"
+) / sum(test_data$Deterioration == "Increase")
+
+# Calculate F1 score
+f1_score <- 2 * precision * recall /
+  (precision + recall)
+
+# Display evaluation metrics
+cat("Accuracy:", round(accuracy, 4), "\n")
+cat("Precision:", round(precision, 4), "\n")
+cat("Recall:", round(recall, 4), "\n")
+cat("F1 Score:", round(f1_score, 4), "\n")
+
+# Majority-class baseline
+baseline_accuracy <- max(
+  prop.table(table(test_data$Deterioration))
+)
+
+cat(
+  "Majority-Class Baseline Accuracy:",
+  round(baseline_accuracy, 4),
+  "\n"
+)
+```
+## 11. Prediction Threshold Analysis
+
+```{r threshold-analysis}
+
+# Function to calculate evaluation metrics
+evaluate_threshold <- function(threshold) {
+
+  predictions <- ifelse(
+    test_probabilities >= threshold,
+    "Increase",
+    "No_Increase"
+  )
+
+  actual <- as.character(test_data$Deterioration)
+
+  TP <- sum(predictions == "Increase" & actual == "Increase")
+  TN <- sum(predictions == "No_Increase" & actual == "No_Increase")
+  FP <- sum(predictions == "Increase" & actual == "No_Increase")
+  FN <- sum(predictions == "No_Increase" & actual == "Increase")
+
+  accuracy <- (TP + TN) / (TP + TN + FP + FN)
+
+  precision <- if ((TP + FP) == 0) {
+    NA_real_
+  } else {
+    TP / (TP + FP)
+  }
+
+  recall <- TP / (TP + FN)
+
+  f1 <- if (is.na(precision) || (precision + recall) == 0) {
+    NA_real_
+  } else {
+    2 * precision * recall / (precision + recall)
+  }
+
+  data.frame(
+    Threshold = threshold,
+    Accuracy = round(accuracy, 4),
+    Precision = round(precision, 4),
+    Recall = round(recall, 4),
+    F1_Score = round(f1, 4)
+  )
+}
+
+# Compare different thresholds
+threshold_results <- do.call(
+  rbind,
+  lapply(c(0.30, 0.40, 0.50, 0.60), evaluate_threshold)
+)
+
+print(threshold_results)
+
+```
+## 12. Improved Logistic Regression Model
+
+```{r improved-logistic-regression}
+
+# Convert calendar quarter into a categorical variable
+train_data$Quarter_Factor <- factor(
+  train_data$Quarter_Number
+)
+
+test_data$Quarter_Factor <- factor(
+  test_data$Quarter_Number,
+  levels = levels(train_data$Quarter_Factor)
+)
+
+# Train improved logistic regression model
+improved_model <- glm(
+  Deterioration ~
+    Median_Rent +
+    Rental_Count +
+    Quarterly_Growth +
+    Previous_Quarter_Growth +
+    Year +
+    Quarter_Factor,
+  data = train_data,
+  family = binomial(link = "logit")
+)
+
+# Display model summary
+summary(improved_model)
+
+# Generate test probabilities
+improved_probabilities <- predict(
+  improved_model,
+  newdata = test_data,
+  type = "response"
+)
+
+# Evaluate using the original 0.50 threshold
+improved_predictions <- factor(
+  ifelse(
+    improved_probabilities >= 0.5,
+    "Increase",
+    "No_Increase"
+  ),
+  levels = c("No_Increase", "Increase")
+)
+
+# Confusion matrix
+print(table(
+  Actual = test_data$Deterioration,
+  Predicted = improved_predictions
+))
+
+# Accuracy
+improved_accuracy <- mean(
+  improved_predictions == test_data$Deterioration
+)
+
+cat(
+  "Improved Model Accuracy:",
+  round(improved_accuracy, 4),
+  "\n"
+)
+
+cat(
+  "Original Model Accuracy:",
+  round(accuracy, 4),
+  "\n"
+)
+
+cat(
+  "Majority-Class Baseline:",
+  round(baseline_accuracy, 4),
+  "\n"
+)
+
+```
+## 13. Improved Model Performance Comparison
+
+```{r improved-model-comparison}
+
+# Display confusion matrix
+cat("Improved Model Confusion Matrix:\n")
+
+print(
+  table(
+    Actual = test_data$Deterioration,
+    Predicted = improved_predictions
+  )
+)
+
+# Compare model accuracy
+cat("\nOriginal Model Accuracy:",
+    round(accuracy * 100, 2), "%\n")
+
+cat("Improved Model Accuracy:",
+    round(improved_accuracy * 100, 2), "%\n")
+
+cat("Majority-Class Baseline:",
+    round(baseline_accuracy * 100, 2), "%\n")
+
+```
+## 14. Historical Momentum Baseline
+
+```{r momentum-baseline}
+
+# Predict an increase if current-quarter growth is positive
+momentum_predictions <- factor(
+  ifelse(
+    test_data$Quarterly_Growth > 0,
+    "Increase",
+    "No_Increase"
+  ),
+  levels = c("No_Increase", "Increase")
+)
+
+# Confusion matrix
+momentum_confusion <- table(
+  Actual = test_data$Deterioration,
+  Predicted = momentum_predictions
+)
+
+print(momentum_confusion)
+
+# Calculate accuracy
+momentum_accuracy <- mean(
+  momentum_predictions == test_data$Deterioration
+)
+
+# Calculate precision and recall
+momentum_tp <- sum(
+  momentum_predictions == "Increase" &
+    test_data$Deterioration == "Increase"
+)
+
+momentum_fp <- sum(
+  momentum_predictions == "Increase" &
+    test_data$Deterioration == "No_Increase"
+)
+
+momentum_fn <- sum(
+  momentum_predictions == "No_Increase" &
+    test_data$Deterioration == "Increase"
+)
+
+momentum_precision <- if (
+  momentum_tp + momentum_fp == 0
+) NA_real_ else momentum_tp / (momentum_tp + momentum_fp)
+
+momentum_recall <- momentum_tp /
+  (momentum_tp + momentum_fn)
+
+momentum_f1 <- if (
+  is.na(momentum_precision) ||
+  momentum_precision + momentum_recall == 0
+) NA_real_ else
+  2 * momentum_precision * momentum_recall /
+  (momentum_precision + momentum_recall)
+
+cat("Momentum Accuracy:",
+    round(momentum_accuracy * 100, 2), "%\n")
+
+cat("Momentum Precision:",
+    round(momentum_precision * 100, 2), "%\n")
+
+cat("Momentum Recall:",
+    round(momentum_recall * 100, 2), "%\n")
+
+cat("Momentum F1 Score:",
+    round(momentum_f1 * 100, 2), "%\n")
+
+```
+## 15. Model Performance Comparison
+
+```{r model-performance-chart}
+library(ggplot2)
+
+model_comparison <- data.frame(
+  Model = c(
+    "Original Logistic (0.50)",
+    "Improved Logistic (0.50)",
+    "Original Logistic (0.30)",
+    "Historical Momentum",
+    "Majority-Class Baseline"
+  ),
+  Accuracy = c(
+    accuracy,
+    improved_accuracy,
+    threshold_results$Accuracy[threshold_results$Threshold == 0.30],
+    momentum_accuracy,
+    baseline_accuracy
+  )
+)
+
+ggplot(
+  model_comparison,
+  aes(
+    x = reorder(Model, Accuracy),
+    y = Accuracy
+  )
+) +
+  geom_col(fill = "steelblue") +
+  geom_text(
+    aes(label = paste0(round(Accuracy * 100, 1), "%")),
+    hjust = -0.15,
+    size = 3.8
+  ) +
+  coord_flip() +
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 1),
+    limits = c(0, 0.75)
+  ) +
+  labs(
+    title = "Comparison of Rental Increase Prediction Approaches",
+    subtitle = "Melbourne LGAs, test period: 2023–2025",
+    x = NULL,
+    y = "Prediction Accuracy",
+    caption = "Source: Homes Victoria rental data; author's analysis."
+  ) +
+  theme_minimal(base_size = 12)
+```
+## 16. Findings and Discussion
+
+### 16.1 Historical Rental Trends
+
+The analysis examined 3,286 quarterly observations covering 31 Melbourne
+Local Government Areas (LGAs) between June 1999 and September 2025.
+
+The median of LGA-level median weekly rents increased substantially over
+the study period, with particularly strong growth visible after 2022.
+
+In September 2025, Bayside recorded the highest median weekly rent
+($743), followed by Manningham ($680) and Melbourne ($670).
+
+### 16.2 Recent Rental Growth
+
+Between September 2024 and September 2025, Bayside experienced the
+largest percentage increase in median weekly rent (10.90%), followed
+by Moonee Valley (10.00%) and Manningham (8.80%).
+
+These results demonstrate that areas with the highest rents are not
+necessarily the same areas experiencing the fastest rental growth.
+
+### 16.3 Predictive Modelling
+
+A logistic regression model was developed to predict whether an LGA's
+median weekly rent would increase in the following quarter.
+
+The model used historical rental indicators, including median rent,
+rental count, quarterly rental growth, previous-quarter growth,
+and calendar-quarter information.
+
+A chronological training/testing split was applied to evaluate predictive performance. The training dataset contained 2,852 observations from December 1999 to September 2022, while the testing dataset contained 310 observations from March 2023 to June 2025. The December 2022 observations were excluded from training because their prediction targets required March 2023 outcomes. This separation ensured that the training labels did not depend on rental observations from the testing period.
+
+The original logistic regression model achieved 45.16% test accuracy.
+A revised model incorporating categorical calendar-quarter effects
+and year achieved 48.71%.
+
+Lowering the original model's classification threshold to 0.30
+increased accuracy to 61.61% and recall to 87.88%.
+However, this threshold was examined using the test set, so the
+result should be interpreted as exploratory.
+
+The historical momentum baseline achieved 58.71% accuracy, while
+the majority-class baseline achieved 63.87%.
+
+None of the evaluated approaches exceeded the majority-class
+baseline in test accuracy.
+
+### 16.4 Limitations
+
+The analysis has several limitations:
+
+1. The dataset contains rental-market indicators but does not include
+   household income. Therefore, the models predict rental-price
+   increases rather than actual rental stress or affordability.
+
+2. The models use a limited set of historical rental indicators.
+   Additional socioeconomic, demographic, and housing-supply
+   variables may improve future modelling.
+
+3. Rental-market conditions may change over time, reducing the
+   reliability of models trained on older observations.
+
+4. The models were evaluated using a single chronological test
+   period. Future work should use rolling-origin validation and
+   a separate, untouched final test period.
+
+5. The reported median rent represents each LGA's rental market
+   and does not capture affordability differences between
+   individual households.
+
+### 16.5 Conclusion
+
+This demonstration establishes a reproducible workflow for collecting,
+cleaning, exploring, and modelling Melbourne rental-market data.
+
+The exploratory analysis identified substantial long-term rental
+growth and differences between LGAs.
+
+Although the predictive models did not outperform the majority-class
+baseline, the results highlight the importance of careful model
+evaluation and the need for richer data.
+
+Future development should integrate household-income and
+socioeconomic indicators to support a more direct assessment
+of rental affordability and potential rental stress.
+
+
