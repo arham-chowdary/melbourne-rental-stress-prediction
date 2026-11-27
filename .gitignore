@@ -1,0 +1,28 @@
+# R session files
+.Rhistory
+.RData
+.Ruserdata
+
+# RStudio temporary files
+.Rproj.user/
+
+# R Markdown temporary files
+*_cache/
+*_files/
+.Rcache/
+
+# Local datasets
+data/*.xlsx
+data/*.csv
+
+# Environment and credentials
+.Renviron
+.env
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
